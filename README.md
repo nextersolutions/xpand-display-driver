@@ -1,48 +1,41 @@
-# SudoVDA
-Based on Microsoft Indirect Display Driver Sample. This creates a virtual display in Windows that acts and functions just like a real one. It's useful for streaming, virtual reality applications, recording, headless servers, etc. The benefit over a physical display is the ability to adjust resolutions and refresh rates beyond the physical displays capabilities. For example, this would enable the ability to stream a game from your home PC using game streaming software at 240hz at 8K while owning a 60hz 1080p monitor (~~unrealistic,~~ but explains the abilities well). For servers without displays, this enabled remote desktop and screen streaming to other systems as if there were a display installed. 
+# xPand Display Driver
 
-Supports emulating resolutions from **640 x 480** to **7680 x 4320 (8K)**, and refresh rates including **60hz, 75hz, 90hz, 120hz, 144hz, 165hz, 240hz, 480hz,** and **500hz.**
+The virtual display driver used by [xPand](https://nextersolutions.com/products/xPand) for Windows. It is an IddCx indirect display driver (user-mode, UMDF 2): the xPand app asks it for a monitor sized like the TV, Windows extends the desktop onto it, and xPand captures and streams that monitor to a Google TV.
 
-This project uses the official Windows Indirect Display Driver combined with the IddCx class extension driver. GitHub shows it's a fork of MTT's Virtual Display Driver, but it actually went a full rewrite half way. I keep the fork info for honoring the previous works done by MTT. 
+Forked from [SudoVDA](https://github.com/SudoMaker/SudoVDA), which is based on the Microsoft Indirect Display Driver sample. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
-## Notice
+## What changed from SudoVDA
 
-HDR is only fully supported on Windows 11 24H2. On 23H2 and lower, you'll try your luck to get the HDR toggle in Windows settings. HDR is not supported on Windows 10.
+- Own identity: hardware ID `Root\XPandDisplay`, device interface `{188abfe0-e836-4ec0-932c-4158485a937c}`, provider "Nextersolutions", EDID manufacturer `XPD`.
+- Device access limited to SYSTEM, Administrators and interactive users (SudoVDA allowed Everyone).
+- `VIRTUAL_DISPLAY_ADD_PARAMS` carries the TV's physical size in millimetres, written into the EDID so Windows chooses a sensible scale.
+- A plain-text log at `%ProgramData%\xPand\driver.log` (written only if the folder grants LOCAL SERVICE write access; the xPand installer sets that up).
+- IOCTL protocol version 1.0.0.
 
-## Config
+The IOCTL contract is [`Common/Include/xpand-display-ioctl.h`](Common/Include/xpand-display-ioctl.h). The xPand app mirrors it in C#; bump the protocol version on any change.
 
-In Registry path `\HKEY_LOCAL_MACHINE\SOFTWARE\SudoMaker\SudoVDA` (create one if not exists):
+## Build
 
-- `gpuName`    [STRING]: The friendly name for the GPU which the virtual adapter connects to. Default unset, will choose the card with biggest videoram automatically.
-- `maxMonitors` [DWORD]: Number of maximum virtual monitors can be created. Defaults to 10(decimal).
-- `watchdog`    [DWORD]: Timeout in seconds for the watchdog to bark. Defaults to 3, set 0 to disable watchdog.
-- `sdrBits`     [DWORD]: Bits for SDR mode. Defaults to 8(decimal)/8(HEX), set 10(decimal)/a(HEX) to enable SDR 10 bits, other values are ignored.
-- `hdrBits`     [DWORD]: Bits for HDR mode. Defaults to 10(decimal)/a(HEX), set 12(decimal)/c(HEX) to enable HDR12 bits/HDR+, other values are ignored.
+Visual Studio 2022 with the Desktop C++ workload, Spectre-mitigated libraries and the Windows Driver Kit (WDK 10.0.26100).
 
-**NOTE**: After changing these values, you'll need to reload the driver or reboot your computer for them to take effect. Please note that if the driver is currently opened by something else, for example Apollo, it won't be able to reload, you'll need to quit the application before reloading the driver.
+```
+MSBuild Driver\XPandDisplay.sln /p:Configuration=Release /p:Platform=x64 /p:SignMode=Off
+```
+
+Output: `Driver\x64\Release\XPandDisplay\` (`XPandDisplay.dll`, `XPandDisplay.inf`, `xpanddisplay.cat`). Sign the catalog before installing; the xPand repository's `XPand.DriverSetup` installs, repairs and removes the driver.
+
+## Configuration
+
+Optional values under `HKLM\SOFTWARE\Nextersolutions\xPandDisplay`, read when the driver loads:
+
+- `gpuName` (string): friendly name of the GPU to render on. Unset picks the adapter with the most video memory.
+- `maxMonitors` (DWORD): maximum virtual monitors. Default 10.
+- `watchdog` (DWORD): seconds without any IOCTL before all monitors are removed. Default 3; 0 disables it.
+- `sdrBits` (DWORD): 8 (default) or 10.
+- `hdrBits` (DWORD): 10 (default) or 12.
+
+Reload the driver (or reboot) after changing them.
 
 ## License
 
-MIT and CC0 or Public Domain (for changes I made, please consult Microsoft for their license), choose the least restrictive option.
-
-## Disclaimer:
-
-This software is provided "AS IS" with NO IMPLICIT OR EXPLICIT warranty. It's worth noting that while this software functioned without issues on my system, there is no guarantee that it will not impact your computer. It operates in User Mode, which reduces the likelihood of causing system instability, such as the Blue Screen of Death. However, exercise caution when using this software.
-
-## Acknowledgements
-
-Shoutout to **Roshkins** for the original repo:
-https://github.com/roshkins/IddSampleDriver
-
-Shoutout to **Baloukj** for the 8-bit / 10-bit support. (Also, first to push the new Microsoft Driver public!)
-https://github.com/baloukj/IddSampleDriver
-
-Shoutout to **Anakngtokwa** for assisting with finding driver sources.
-
-**Microsoft** Indirect Display Driver/Sample (Driver code): 
-https://github.com/microsoft/Windows-driver-samples/tree/master/video/IndirectDisplay
-
-Thanks to **AKATrevorJay** https://github.com/akatrevorjay/edid-generator for the hi-res EDID.
-
-Shoutout to **zjoasan** and **Bud** for the helper scripts and build support!
-
+MIT, see [LICENSE](LICENSE). Portions derived from the Microsoft sample are under the Microsoft Public License; see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

@@ -26,7 +26,7 @@
     <ClInclude Include="Trace.h" />
   </ItemGroup>
   <ItemGroup>
-    <Inf Include="SudoVDA.inf" />
+    <Inf Include="XPandDisplay.inf" />
   </ItemGroup>
   <PropertyGroup Label="Globals">
     <ProjectGuid>{8DC3F311-2CF2-4F7D-A1D0-FD75C75833FD}</ProjectGuid>
@@ -35,7 +35,7 @@
     <MinimumVisualStudioVersion>12.0</MinimumVisualStudioVersion>
     <Configuration>Debug</Configuration>
     <Platform Condition="'$(Platform)' == ''">x64</Platform>
-    <RootNamespace>SudoVDA</RootNamespace>
+    <RootNamespace>XPandDisplay</RootNamespace>
   </PropertyGroup>
   <PropertyGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <PlatformToolset>WindowsUserModeDriver10.0</PlatformToolset>

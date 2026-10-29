@@ -3,7 +3,7 @@
 #include <windows.h>
 
 #ifdef __cplusplus
-namespace SUDOVDA
+namespace XPAND
 {
 #endif
 
@@ -14,23 +14,23 @@ namespace SUDOVDA
 #define IOCTL_DRIVER_PING CTL_CODE(FILE_DEVICE_UNKNOWN, 0x888, METHOD_BUFFERED, FILE_ANY_ACCESS)
 #define IOCTL_GET_PROTOCOL_VERSION CTL_CODE(FILE_DEVICE_UNKNOWN, 0x8FF, METHOD_BUFFERED, FILE_ANY_ACCESS)
 
-typedef struct _SUVDA_PROTOCAL_VERSION {
+typedef struct _XPAND_PROTOCOL_VERSION {
 	uint8_t Major;
 	uint8_t Minor;
 	uint8_t Incremental;
 	bool TestBuild;
-} SUVDA_PROTOCAL_VERSION, * PSUVDA_PROTOCAL_VERSION;
+} XPAND_PROTOCOL_VERSION, * PXPAND_PROTOCOL_VERSION;
 
-// Please update the version after ioctl changed
-static const SUVDA_PROTOCAL_VERSION VDAProtocolVersion = { 0, 2, 1, true };
+// Bump after any IOCTL or struct change; the xPand app refuses a driver with a different Major.
+static const XPAND_PROTOCOL_VERSION XPandProtocolVersion = { 1, 0, 0, false };
 
-static const char* SUVDA_HARDWARE_ID = "root\\sudomaker\\sudovda";
+static const char* XPAND_HARDWARE_ID = "root\\xpanddisplay";
 
-// DO NOT CHANGE
+// Display device class. DO NOT CHANGE
 // {4d36e968-e325-11ce-bfc1-08002be10318}
-static const GUID SUVDA_CLASS_GUID = { 0x4d36e968, 0xe325, 0x11ce, { 0xbf, 0xc1, 0x08, 0x00, 0x2b, 0xe1, 0x03, 0x18 } };
-// {e5bcc234-1e0c-418a-a0d4-ef8b7501414d}
-static const GUID SUVDA_INTERFACE_GUID = { 0xe5bcc234, 0x1e0c, 0x418a, { 0xa0, 0xd4, 0xef, 0x8b, 0x75, 0x01, 0x41, 0x4d } };
+static const GUID XPAND_CLASS_GUID = { 0x4d36e968, 0xe325, 0x11ce, { 0xbf, 0xc1, 0x08, 0x00, 0x2b, 0xe1, 0x03, 0x18 } };
+// {188abfe0-e836-4ec0-932c-4158485a937c}
+static const GUID XPAND_INTERFACE_GUID = { 0x188abfe0, 0xe836, 0x4ec0, { 0x93, 0x2c, 0x41, 0x58, 0x48, 0x5a, 0x93, 0x7c } };
 
 typedef struct _VIRTUAL_DISPLAY_ADD_PARAMS {
 	UINT Width;
@@ -39,6 +39,9 @@ typedef struct _VIRTUAL_DISPLAY_ADD_PARAMS {
 	GUID MonitorGuid;
 	CHAR DeviceName[14];
 	CHAR SerialNumber[14];
+	// Physical size reported in the EDID so Windows picks a sensible scale; 0 keeps the default.
+	UINT WidthMm;
+	UINT HeightMm;
 } VIRTUAL_DISPLAY_ADD_PARAMS, * PVIRTUAL_DISPLAY_ADD_PARAMS;
 
 typedef struct _VIRTUAL_DISPLAY_REMOVE_PARAMS {
@@ -60,9 +63,9 @@ typedef struct _VIRTUAL_DISPLAY_GET_WATCHDOG_OUT {
 } VIRTUAL_DISPLAY_GET_WATCHDOG_OUT, * PVIRTUAL_DISPLAY_GET_WATCHDOG_OUT;
 
 typedef struct _VIRTUAL_DISPLAY_GET_PROTOCOL_VERSION_OUT {
-	SUVDA_PROTOCAL_VERSION Version;
+	XPAND_PROTOCOL_VERSION Version;
 } VIRTUAL_DISPLAY_GET_PROTOCOL_VERSION_OUT, * PVIRTUAL_DISPLAY_GET_PROTOCOL_VERSION_OUT;
 
 #ifdef __cplusplus
-} // namespace SUDOVDA
+} // namespace XPAND
 #endif

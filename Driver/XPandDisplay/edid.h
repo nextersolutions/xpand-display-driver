@@ -4,9 +4,12 @@
 #define EDID_OFFSET_SERIALSTR 0x4D
 #define EDID_OFFSET_PRODNAME 0x71
 #define EDID_STRING_FIELD_SIZE 13
+#define EDID_OFFSET_SIZE_CM 0x15
+#define EDID_OFFSET_DTD_SIZE_MM 0x42
 
+// Manufacturer "XPD" (0x6204), product code 0x0001
 const BYTE edid_base[] = {
-	0x00, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x00, 0x4d, 0xab, 0xce, 0xd1, 0xef, 0x2d, 0xbc, 0x1a,
+	0x00, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x00, 0x62, 0x04, 0x01, 0x00, 0xef, 0x2d, 0xbc, 0x1a,
 	0x20, 0x22, 0x01, 0x03, 0x80, 0x46, 0x27, 0x78, 0x0f, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 	0x00, 0x00, 0x00, 0xa5, 0x6b, 0x80, 0xd1, 0xc0, 0xb3, 0x00, 0xa9, 0xc0, 0x81, 0x80, 0x81, 0x00,
 	0x81, 0xc0, 0x01, 0x01, 0x01, 0x01, 0x4d, 0xd0, 0x00, 0xa0, 0xf0, 0x70, 0x3e, 0x80, 0x30, 0x20,
@@ -26,7 +29,7 @@ const BYTE edid_base[] = {
 
 
 
-uint8_t* generate_edid(uint32_t serial, const char* serial_str, const char* prod_name) {
+uint8_t* generate_edid(uint32_t serial, const char* serial_str, const char* prod_name, uint32_t width_mm = 0, uint32_t height_mm = 0) {
 	uint8_t* edid_data = (uint8_t*)malloc(sizeof(edid_base));
 
 	if (!edid_data) {
@@ -36,6 +39,20 @@ uint8_t* generate_edid(uint32_t serial, const char* serial_str, const char* prod
 	memcpy(edid_data, edid_base, sizeof(edid_base));
 
 	memcpy(edid_data + EDID_OFFSET_SERIAL, &serial, 4);
+
+	if (width_mm > 0 && height_mm > 0) {
+		uint32_t w_mm = width_mm > 0xfff ? 0xfff : width_mm;
+		uint32_t h_mm = height_mm > 0xfff ? 0xfff : height_mm;
+		uint32_t w_cm = (w_mm + 5) / 10;
+		uint32_t h_cm = (h_mm + 5) / 10;
+
+		edid_data[EDID_OFFSET_SIZE_CM] = (uint8_t)(w_cm == 0 ? 1 : (w_cm > 0xff ? 0xff : w_cm));
+		edid_data[EDID_OFFSET_SIZE_CM + 1] = (uint8_t)(h_cm == 0 ? 1 : (h_cm > 0xff ? 0xff : h_cm));
+
+		edid_data[EDID_OFFSET_DTD_SIZE_MM] = (uint8_t)(w_mm & 0xff);
+		edid_data[EDID_OFFSET_DTD_SIZE_MM + 1] = (uint8_t)(h_mm & 0xff);
+		edid_data[EDID_OFFSET_DTD_SIZE_MM + 2] = (uint8_t)(((w_mm >> 8) << 4) | (h_mm >> 8));
+	}
 
 	size_t pn_len, pn_pad;
 

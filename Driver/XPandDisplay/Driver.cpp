@@ -25,12 +25,52 @@ Environment:
 #include <mutex>
 
 #include <AdapterOption.h>
-#include <sudovda-ioctl.h>
+#include <xpand-display-ioctl.h>
 
 using namespace std;
 using namespace Microsoft::IndirectDisp;
 using namespace Microsoft::WRL;
-using namespace SUDOVDA;
+using namespace XPAND;
+
+std::mutex logMutex;
+
+// Appends one line to %ProgramData%\xPand\driver.log. The installer grants LOCAL SERVICE
+// write access to that folder; without it logging is silently skipped.
+void XPandLog(const char* format, ...) {
+	std::lock_guard<std::mutex> lg(logMutex);
+
+	wchar_t path[MAX_PATH];
+	DWORD len = GetEnvironmentVariableW(L"ProgramData", path, MAX_PATH);
+	if (!len || len > MAX_PATH - 32) {
+		return;
+	}
+	wcscat_s(path, L"\\xPand\\driver.log");
+
+	HANDLE file = CreateFileW(path, FILE_APPEND_DATA, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+	if (file == INVALID_HANDLE_VALUE) {
+		return;
+	}
+
+	SYSTEMTIME t;
+	GetLocalTime(&t);
+	char line[512];
+	int n = sprintf_s(line, "%04u-%02u-%02u %02u:%02u:%02u.%03u [%lu] ", t.wYear, t.wMonth, t.wDay, t.wHour, t.wMinute, t.wSecond, t.wMilliseconds, GetCurrentProcessId());
+	if (n < 0) {
+		n = 0;
+	}
+
+	va_list args;
+	va_start(args, format);
+	_vsnprintf_s(line + n, sizeof(line) - n - 2, _TRUNCATE, format, args);
+	va_end(args);
+	n += (int)strlen(line + n);
+	line[n++] = '\r';
+	line[n++] = '\n';
+
+	DWORD written;
+	WriteFile(file, line, n, &written, NULL);
+	CloseHandle(file);
+}
 
 LUID preferredAdapterLuid{};
 bool preferredAdapterChanged = false;
@@ -229,27 +269,27 @@ static IDDCX_TARGET_MODE2 CreateIddCxTargetMode2(DWORD Width, DWORD Height, DWOR
 
 extern "C" DRIVER_INITIALIZE DriverEntry;
 
-EVT_WDF_DRIVER_UNLOAD SudoVDADriverUnload;
-EVT_WDF_DRIVER_DEVICE_ADD SudoVDADeviceAdd;
-EVT_WDF_DEVICE_D0_ENTRY SudoVDADeviceD0Entry;
+EVT_WDF_DRIVER_UNLOAD XPandDisplayDriverUnload;
+EVT_WDF_DRIVER_DEVICE_ADD XPandDisplayDeviceAdd;
+EVT_WDF_DEVICE_D0_ENTRY XPandDisplayDeviceD0Entry;
 
-EVT_IDD_CX_ADAPTER_INIT_FINISHED SudoVDAAdapterInitFinished;
-EVT_IDD_CX_ADAPTER_COMMIT_MODES SudoVDAAdapterCommitModes;
+EVT_IDD_CX_ADAPTER_INIT_FINISHED XPandDisplayAdapterInitFinished;
+EVT_IDD_CX_ADAPTER_COMMIT_MODES XPandDisplayAdapterCommitModes;
 
-EVT_IDD_CX_PARSE_MONITOR_DESCRIPTION SudoVDAParseMonitorDescription;
-EVT_IDD_CX_MONITOR_GET_DEFAULT_DESCRIPTION_MODES SudoVDAMonitorGetDefaultModes;
-EVT_IDD_CX_MONITOR_QUERY_TARGET_MODES SudoVDAMonitorQueryModes;
+EVT_IDD_CX_PARSE_MONITOR_DESCRIPTION XPandDisplayParseMonitorDescription;
+EVT_IDD_CX_MONITOR_GET_DEFAULT_DESCRIPTION_MODES XPandDisplayMonitorGetDefaultModes;
+EVT_IDD_CX_MONITOR_QUERY_TARGET_MODES XPandDisplayMonitorQueryModes;
 
-EVT_IDD_CX_MONITOR_ASSIGN_SWAPCHAIN SudoVDAMonitorAssignSwapChain;
-EVT_IDD_CX_MONITOR_UNASSIGN_SWAPCHAIN SudoVDAMonitorUnassignSwapChain;
+EVT_IDD_CX_MONITOR_ASSIGN_SWAPCHAIN XPandDisplayMonitorAssignSwapChain;
+EVT_IDD_CX_MONITOR_UNASSIGN_SWAPCHAIN XPandDisplayMonitorUnassignSwapChain;
 
-EVT_IDD_CX_ADAPTER_QUERY_TARGET_INFO SudoVDAAdapterQueryTargetInfo;
-EVT_IDD_CX_MONITOR_SET_DEFAULT_HDR_METADATA SudoVDAMonitorSetDefaultHdrMetadata;
-EVT_IDD_CX_PARSE_MONITOR_DESCRIPTION2 SudoVDAParseMonitorDescription2;
-EVT_IDD_CX_MONITOR_QUERY_TARGET_MODES2 SudoVDAMonitorQueryModes2;
-EVT_IDD_CX_ADAPTER_COMMIT_MODES2 SudoVDAAdapterCommitModes2;
+EVT_IDD_CX_ADAPTER_QUERY_TARGET_INFO XPandDisplayAdapterQueryTargetInfo;
+EVT_IDD_CX_MONITOR_SET_DEFAULT_HDR_METADATA XPandDisplayMonitorSetDefaultHdrMetadata;
+EVT_IDD_CX_PARSE_MONITOR_DESCRIPTION2 XPandDisplayParseMonitorDescription2;
+EVT_IDD_CX_MONITOR_QUERY_TARGET_MODES2 XPandDisplayMonitorQueryModes2;
+EVT_IDD_CX_ADAPTER_COMMIT_MODES2 XPandDisplayAdapterCommitModes2;
 
-EVT_IDD_CX_MONITOR_SET_GAMMA_RAMP SudoVDAMonitorSetGammaRamp;
+EVT_IDD_CX_MONITOR_SET_GAMMA_RAMP XPandDisplayMonitorSetGammaRamp;
 
 struct IndirectDeviceContextWrapper
 {
@@ -295,7 +335,7 @@ void LoadSettings() {
 	LONG lResult;
 
 	// Open the registry key
-	lResult = RegOpenKeyExW(HKEY_LOCAL_MACHINE, L"SOFTWARE\\SudoMaker\\SudoVDA", 0, KEY_READ, &hKey);
+	lResult = RegOpenKeyExW(HKEY_LOCAL_MACHINE, L"SOFTWARE\\Nextersolutions\\xPandDisplay", 0, KEY_READ, &hKey);
 	if (lResult != ERROR_SUCCESS) {
 		return;
 	}
@@ -392,6 +432,7 @@ void RunWatchdog() {
 					watchdogCountdown -= 1;
 
 					if (!watchdogCountdown) {
+						XPandLog("watchdog expired, removing %zu monitor(s)", monitorCtxList.size());
 						DisconnectAllMonitors();
 					}
 				} else {
@@ -414,6 +455,7 @@ extern "C" NTSTATUS DriverEntry(
 )
 {
 	LoadSettings();
+	XPandLog("driver loaded, protocol %u.%u.%u, watchdog %us", XPandProtocolVersion.Major, XPandProtocolVersion.Minor, XPandProtocolVersion.Incremental, (unsigned)watchdogTimeout);
 
 	WDF_DRIVER_CONFIG Config;
 	NTSTATUS Status;
@@ -422,10 +464,10 @@ extern "C" NTSTATUS DriverEntry(
 	WDF_OBJECT_ATTRIBUTES_INIT(&Attributes);
 
 	WDF_DRIVER_CONFIG_INIT(&Config,
-		SudoVDADeviceAdd
+		XPandDisplayDeviceAdd
 	);
 
-	Config.EvtDriverUnload = SudoVDADriverUnload;
+	Config.EvtDriverUnload = XPandDisplayDriverUnload;
 
 	Status = WdfDriverCreate(pDriverObject, pRegistryPath, &Attributes, &Config, WDF_NO_HANDLE);
 	if (!NT_SUCCESS(Status))
@@ -441,7 +483,7 @@ extern "C" NTSTATUS DriverEntry(
 }
 
 _Use_decl_annotations_
-void SudoVDADriverUnload(_In_ WDFDRIVER) {
+void XPandDisplayDriverUnload(_In_ WDFDRIVER) {
 	if (watchdogTimeout > 0) {
 		watchdogTimeout = 0;
 		watchdogThread.join();
@@ -450,7 +492,7 @@ void SudoVDADriverUnload(_In_ WDFDRIVER) {
 	}
 }
 
-VOID SudoVDAIoDeviceControl(
+VOID XPandDisplayIoDeviceControl(
 	_In_ WDFDEVICE Device,
 	_In_ WDFREQUEST Request,
 	_In_ size_t OutputBufferLength,
@@ -459,7 +501,7 @@ VOID SudoVDAIoDeviceControl(
 );
 
 _Use_decl_annotations_
-NTSTATUS SudoVDADeviceAdd(WDFDRIVER Driver, PWDFDEVICE_INIT pDeviceInit)
+NTSTATUS XPandDisplayDeviceAdd(WDFDRIVER Driver, PWDFDEVICE_INIT pDeviceInit)
 {
 	NTSTATUS Status = STATUS_SUCCESS;
 	WDF_PNPPOWER_EVENT_CALLBACKS PnpPowerCallbacks;
@@ -468,7 +510,7 @@ NTSTATUS SudoVDADeviceAdd(WDFDRIVER Driver, PWDFDEVICE_INIT pDeviceInit)
 
 	// Register for power callbacks - in this sample only power-on is needed
 	WDF_PNPPOWER_EVENT_CALLBACKS_INIT(&PnpPowerCallbacks);
-	PnpPowerCallbacks.EvtDeviceD0Entry = SudoVDADeviceD0Entry;
+	PnpPowerCallbacks.EvtDeviceD0Entry = XPandDisplayDeviceD0Entry;
 	WdfDeviceInitSetPnpPowerEventCallbacks(pDeviceInit, &PnpPowerCallbacks);
 
 	IDD_CX_CLIENT_CONFIG IddConfig;
@@ -476,27 +518,27 @@ NTSTATUS SudoVDADeviceAdd(WDFDRIVER Driver, PWDFDEVICE_INIT pDeviceInit)
 
 	// If the driver wishes to handle custom IoDeviceControl requests, it's necessary to use this callback since IddCx
 	// redirects IoDeviceControl requests to an internal queue.
-	IddConfig.EvtIddCxDeviceIoControl = SudoVDAIoDeviceControl;
+	IddConfig.EvtIddCxDeviceIoControl = XPandDisplayIoDeviceControl;
 
-	IddConfig.EvtIddCxAdapterInitFinished = SudoVDAAdapterInitFinished;
+	IddConfig.EvtIddCxAdapterInitFinished = XPandDisplayAdapterInitFinished;
 
-	IddConfig.EvtIddCxMonitorGetDefaultDescriptionModes = SudoVDAMonitorGetDefaultModes;
-	IddConfig.EvtIddCxMonitorAssignSwapChain = SudoVDAMonitorAssignSwapChain;
-	IddConfig.EvtIddCxMonitorUnassignSwapChain = SudoVDAMonitorUnassignSwapChain;
+	IddConfig.EvtIddCxMonitorGetDefaultDescriptionModes = XPandDisplayMonitorGetDefaultModes;
+	IddConfig.EvtIddCxMonitorAssignSwapChain = XPandDisplayMonitorAssignSwapChain;
+	IddConfig.EvtIddCxMonitorUnassignSwapChain = XPandDisplayMonitorUnassignSwapChain;
 
 	if (IDD_IS_FIELD_AVAILABLE(IDD_CX_CLIENT_CONFIG, EvtIddCxAdapterQueryTargetInfo))
 	{
 		isHDRSupported = true;
-		IddConfig.EvtIddCxAdapterQueryTargetInfo = SudoVDAAdapterQueryTargetInfo;
-		IddConfig.EvtIddCxMonitorSetDefaultHdrMetaData = SudoVDAMonitorSetDefaultHdrMetadata;
-		IddConfig.EvtIddCxParseMonitorDescription2 = SudoVDAParseMonitorDescription2;
-		IddConfig.EvtIddCxMonitorQueryTargetModes2 = SudoVDAMonitorQueryModes2;
-		IddConfig.EvtIddCxAdapterCommitModes2 = SudoVDAAdapterCommitModes2;
-		IddConfig.EvtIddCxMonitorSetGammaRamp = SudoVDAMonitorSetGammaRamp;
+		IddConfig.EvtIddCxAdapterQueryTargetInfo = XPandDisplayAdapterQueryTargetInfo;
+		IddConfig.EvtIddCxMonitorSetDefaultHdrMetaData = XPandDisplayMonitorSetDefaultHdrMetadata;
+		IddConfig.EvtIddCxParseMonitorDescription2 = XPandDisplayParseMonitorDescription2;
+		IddConfig.EvtIddCxMonitorQueryTargetModes2 = XPandDisplayMonitorQueryModes2;
+		IddConfig.EvtIddCxAdapterCommitModes2 = XPandDisplayAdapterCommitModes2;
+		IddConfig.EvtIddCxMonitorSetGammaRamp = XPandDisplayMonitorSetGammaRamp;
 	} else {
-		IddConfig.EvtIddCxParseMonitorDescription = SudoVDAParseMonitorDescription;
-		IddConfig.EvtIddCxMonitorQueryTargetModes = SudoVDAMonitorQueryModes;
-		IddConfig.EvtIddCxAdapterCommitModes = SudoVDAAdapterCommitModes;
+		IddConfig.EvtIddCxParseMonitorDescription = XPandDisplayParseMonitorDescription;
+		IddConfig.EvtIddCxMonitorQueryTargetModes = XPandDisplayMonitorQueryModes;
+		IddConfig.EvtIddCxAdapterCommitModes = XPandDisplayAdapterCommitModes;
 	}
 
 	Status = IddCxDeviceInitConfig(pDeviceInit, &IddConfig);
@@ -526,7 +568,7 @@ NTSTATUS SudoVDADeviceAdd(WDFDRIVER Driver, PWDFDEVICE_INIT pDeviceInit)
 
 	Status = WdfDeviceCreateDeviceInterface(
 		Device,
-		&SUVDA_INTERFACE_GUID,
+		&XPAND_INTERFACE_GUID,
 		NULL
 	);
 
@@ -544,7 +586,7 @@ NTSTATUS SudoVDADeviceAdd(WDFDRIVER Driver, PWDFDEVICE_INIT pDeviceInit)
 }
 
 _Use_decl_annotations_
-NTSTATUS SudoVDADeviceD0Entry(WDFDEVICE Device, WDF_POWER_DEVICE_STATE PreviousState)
+NTSTATUS XPandDisplayDeviceD0Entry(WDFDEVICE Device, WDF_POWER_DEVICE_STATE PreviousState)
 {
 	UNREFERENCED_PARAMETER(PreviousState);
 
@@ -803,9 +845,9 @@ void IndirectDeviceContext::InitAdapter()
 	AdapterCaps.EndPointDiagnostics.TransmissionType = IDDCX_TRANSMISSION_TYPE_WIRED_OTHER;
 
 	// Declare your device strings for telemetry (required)
-	AdapterCaps.EndPointDiagnostics.pEndPointFriendlyName = L"SudoMaker Virtual Display Adapter";
-	AdapterCaps.EndPointDiagnostics.pEndPointManufacturerName = L"SudoMaker";
-	AdapterCaps.EndPointDiagnostics.pEndPointModelName = L"SudoVDA";
+	AdapterCaps.EndPointDiagnostics.pEndPointFriendlyName = L"xPand Virtual Display Adapter";
+	AdapterCaps.EndPointDiagnostics.pEndPointManufacturerName = L"Nextersolutions";
+	AdapterCaps.EndPointDiagnostics.pEndPointModelName = L"xPand Virtual Display";
 
 	// Declare your hardware and firmware versions (required)
 	IDDCX_ENDPOINT_VERSION Version = {};
@@ -992,7 +1034,7 @@ void IndirectDeviceContext::_TestCreateMonitor() {
 	std::string idx = std::to_string(connectorIndex);
 	std::string serialStr = "VDD2408";
 	serialStr += idx;
-	std::string dispName = "SudoVDD #";
+	std::string dispName = "xPand #";
 	dispName += idx;
 	GUID containerId;
 	CoCreateGuid(&containerId);
@@ -1005,7 +1047,7 @@ void IndirectDeviceContext::_TestCreateMonitor() {
 }
 
 _Use_decl_annotations_
-NTSTATUS SudoVDAAdapterInitFinished(IDDCX_ADAPTER AdapterObject, const IDARG_IN_ADAPTER_INIT_FINISHED* pInArgs)
+NTSTATUS XPandDisplayAdapterInitFinished(IDDCX_ADAPTER AdapterObject, const IDARG_IN_ADAPTER_INIT_FINISHED* pInArgs)
 {
 	// UNREFERENCED_PARAMETER(AdapterObject);
 	// UNREFERENCED_PARAMETER(pInArgs);
@@ -1033,7 +1075,7 @@ NTSTATUS SudoVDAAdapterInitFinished(IDDCX_ADAPTER AdapterObject, const IDARG_IN_
 }
 
 _Use_decl_annotations_
-NTSTATUS SudoVDAAdapterCommitModes(IDDCX_ADAPTER AdapterObject, const IDARG_IN_COMMITMODES* pInArgs)
+NTSTATUS XPandDisplayAdapterCommitModes(IDDCX_ADAPTER AdapterObject, const IDARG_IN_COMMITMODES* pInArgs)
 {
 	UNREFERENCED_PARAMETER(AdapterObject);
 	UNREFERENCED_PARAMETER(pInArgs);
@@ -1050,7 +1092,7 @@ NTSTATUS SudoVDAAdapterCommitModes(IDDCX_ADAPTER AdapterObject, const IDARG_IN_C
 }
 
 _Use_decl_annotations_
-NTSTATUS SudoVDAAdapterCommitModes2(
+NTSTATUS XPandDisplayAdapterCommitModes2(
 	IDDCX_ADAPTER AdapterObject,
 	const IDARG_IN_COMMITMODES2* pInArgs
 )
@@ -1062,7 +1104,7 @@ NTSTATUS SudoVDAAdapterCommitModes2(
 }
 
 _Use_decl_annotations_
-NTSTATUS SudoVDAParseMonitorDescription(const IDARG_IN_PARSEMONITORDESCRIPTION* pInArgs, IDARG_OUT_PARSEMONITORDESCRIPTION* pOutArgs)
+NTSTATUS XPandDisplayParseMonitorDescription(const IDARG_IN_PARSEMONITORDESCRIPTION* pInArgs, IDARG_OUT_PARSEMONITORDESCRIPTION* pOutArgs)
 {
 	// ==============================
 	// TODO: In a real driver, this function would be called to generate monitor modes for an EDID by parsing it. In
@@ -1152,7 +1194,7 @@ NTSTATUS SudoVDAParseMonitorDescription(const IDARG_IN_PARSEMONITORDESCRIPTION* 
 }
 
 _Use_decl_annotations_
-NTSTATUS SudoVDAParseMonitorDescription2(
+NTSTATUS XPandDisplayParseMonitorDescription2(
 	const IDARG_IN_PARSEMONITORDESCRIPTION2* pInArgs,
 	IDARG_OUT_PARSEMONITORDESCRIPTION* pOutArgs
 )
@@ -1240,7 +1282,7 @@ NTSTATUS SudoVDAParseMonitorDescription2(
 }
 
 _Use_decl_annotations_
-NTSTATUS SudoVDAMonitorGetDefaultModes(IDDCX_MONITOR MonitorObject, const IDARG_IN_GETDEFAULTDESCRIPTIONMODES* pInArgs, IDARG_OUT_GETDEFAULTDESCRIPTIONMODES* pOutArgs)
+NTSTATUS XPandDisplayMonitorGetDefaultModes(IDDCX_MONITOR MonitorObject, const IDARG_IN_GETDEFAULTDESCRIPTIONMODES* pInArgs, IDARG_OUT_GETDEFAULTDESCRIPTIONMODES* pOutArgs)
 {
 	// ==============================
 	// TODO: In a real driver, this function would be called to generate monitor modes for a monitor with no EDID.
@@ -1273,7 +1315,7 @@ NTSTATUS SudoVDAMonitorGetDefaultModes(IDDCX_MONITOR MonitorObject, const IDARG_
 }
 
 _Use_decl_annotations_
-NTSTATUS SudoVDAMonitorQueryModes(IDDCX_MONITOR MonitorObject, const IDARG_IN_QUERYTARGETMODES* pInArgs, IDARG_OUT_QUERYTARGETMODES* pOutArgs)
+NTSTATUS XPandDisplayMonitorQueryModes(IDDCX_MONITOR MonitorObject, const IDARG_IN_QUERYTARGETMODES* pInArgs, IDARG_OUT_QUERYTARGETMODES* pOutArgs)
 {
 	UNREFERENCED_PARAMETER(MonitorObject);
 
@@ -1343,7 +1385,7 @@ NTSTATUS SudoVDAMonitorQueryModes(IDDCX_MONITOR MonitorObject, const IDARG_IN_QU
 }
 
 _Use_decl_annotations_
-NTSTATUS SudoVDAMonitorQueryModes2(IDDCX_MONITOR MonitorObject, const IDARG_IN_QUERYTARGETMODES2* pInArgs, IDARG_OUT_QUERYTARGETMODES* pOutArgs)
+NTSTATUS XPandDisplayMonitorQueryModes2(IDDCX_MONITOR MonitorObject, const IDARG_IN_QUERYTARGETMODES2* pInArgs, IDARG_OUT_QUERYTARGETMODES* pOutArgs)
 {
 	UNREFERENCED_PARAMETER(MonitorObject);
 
@@ -1411,7 +1453,7 @@ NTSTATUS SudoVDAMonitorQueryModes2(IDDCX_MONITOR MonitorObject, const IDARG_IN_Q
 }
 
 _Use_decl_annotations_
-NTSTATUS SudoVDAMonitorAssignSwapChain(IDDCX_MONITOR MonitorObject, const IDARG_IN_SETSWAPCHAIN* pInArgs)
+NTSTATUS XPandDisplayMonitorAssignSwapChain(IDDCX_MONITOR MonitorObject, const IDARG_IN_SETSWAPCHAIN* pInArgs)
 {
 	auto* pMonitorContextWrapper = WdfObjectGet_IndirectMonitorContextWrapper(MonitorObject);
 
@@ -1429,7 +1471,7 @@ NTSTATUS SudoVDAMonitorAssignSwapChain(IDDCX_MONITOR MonitorObject, const IDARG_
 }
 
 _Use_decl_annotations_
-NTSTATUS SudoVDAMonitorUnassignSwapChain(IDDCX_MONITOR MonitorObject)
+NTSTATUS XPandDisplayMonitorUnassignSwapChain(IDDCX_MONITOR MonitorObject)
 {
 	auto* pMonitorContextWrapper = WdfObjectGet_IndirectMonitorContextWrapper(MonitorObject);
 	pMonitorContextWrapper->pContext->UnassignSwapChain();
@@ -1437,7 +1479,7 @@ NTSTATUS SudoVDAMonitorUnassignSwapChain(IDDCX_MONITOR MonitorObject)
 }
 
 _Use_decl_annotations_
-NTSTATUS SudoVDAAdapterQueryTargetInfo(
+NTSTATUS XPandDisplayAdapterQueryTargetInfo(
 	IDDCX_ADAPTER AdapterObject,
 	IDARG_IN_QUERYTARGET_INFO* pInArgs,
 	IDARG_OUT_QUERYTARGET_INFO* pOutArgs
@@ -1452,7 +1494,7 @@ NTSTATUS SudoVDAAdapterQueryTargetInfo(
 }
 
 _Use_decl_annotations_
-NTSTATUS SudoVDAMonitorSetDefaultHdrMetadata(
+NTSTATUS XPandDisplayMonitorSetDefaultHdrMetadata(
 	IDDCX_MONITOR MonitorObject,
 	const IDARG_IN_MONITOR_SET_DEFAULT_HDR_METADATA* pInArgs
 )
@@ -1464,7 +1506,7 @@ NTSTATUS SudoVDAMonitorSetDefaultHdrMetadata(
 }
 
 _Use_decl_annotations_
-NTSTATUS SudoVDAMonitorSetGammaRamp(
+NTSTATUS XPandDisplayMonitorSetGammaRamp(
 	IDDCX_MONITOR MonitorObject,
 	const IDARG_IN_SET_GAMMARAMP* pInArgs
 )
@@ -1477,7 +1519,7 @@ NTSTATUS SudoVDAMonitorSetGammaRamp(
 
 #pragma endregion
 
-VOID SudoVDAIoDeviceControl(
+VOID XPandDisplayIoDeviceControl(
 	_In_ WDFDEVICE Device,
 	_In_ WDFREQUEST Request,
 	_In_ size_t OutputBufferLength,
@@ -1542,7 +1584,7 @@ VOID SudoVDAIoDeviceControl(
 			auto* pDeviceContextWrapper = WdfObjectGet_IndirectDeviceContextWrapper(Device);
 
 			IndirectMonitorContext* pMonitorContext;
-			uint8_t* edidData = generate_edid(params->MonitorGuid.Data1, params->SerialNumber, params->DeviceName);
+			uint8_t* edidData = generate_edid(params->MonitorGuid.Data1, params->SerialNumber, params->DeviceName, params->WidthMm, params->HeightMm);
 			VirtualMonitorMode preferredMode = {params->Width, params->Height, params->RefreshRate};
 			if (preferredMode.VSync < 1000) {
 				preferredMode.VSync *= 1000;
@@ -1550,12 +1592,14 @@ VOID SudoVDAIoDeviceControl(
 			Status = pDeviceContextWrapper->pContext->CreateMonitor(pMonitorContext, edidData, params->MonitorGuid, preferredMode);
 
 			if (!NT_SUCCESS(Status)) {
+				XPandLog("add %ux%u@%u failed: 0x%08lx", params->Width, params->Height, params->RefreshRate, Status);
 				break;
 			}
 
 			output->AdapterLuid = pMonitorContext->adapterLuid;
 			output->TargetId = pMonitorContext->targetId;
 			bytesReturned = sizeof(VIRTUAL_DISPLAY_ADD_OUT);
+			XPandLog("added %ux%u@%u (%ux%u mm), target %u", params->Width, params->Height, params->RefreshRate, params->WidthMm, params->HeightMm, pMonitorContext->targetId);
 		}
 		else {
 			Status = STATUS_INVALID_PARAMETER;
@@ -1587,6 +1631,7 @@ VOID SudoVDAIoDeviceControl(
 				IddCxMonitorDeparture(ctx->GetMonitor());
 				monitorCtxList.erase(it);
 				Status = STATUS_SUCCESS;
+				XPandLog("removed monitor %08lx", params->MonitorGuid.Data1);
 				break;
 			}
 		}
@@ -1634,7 +1679,7 @@ VOID SudoVDAIoDeviceControl(
 			break;
 		}
 
-		output->Version = VDAProtocolVersion;
+		output->Version = XPandProtocolVersion;
 		bytesReturned = sizeof(VIRTUAL_DISPLAY_GET_PROTOCOL_VERSION_OUT);
 	}
 	default:
